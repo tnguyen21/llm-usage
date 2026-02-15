@@ -28,9 +28,13 @@ func fetchUsage(token string) (*UsageResponse, error) {
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	const maxUsageResponseBytes = 1 << 20 // 1 MiB
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUsageResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(body) > maxUsageResponseBytes {
+		return nil, fmt.Errorf("API response too large")
 	}
 
 	if resp.StatusCode == 401 {

@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 func loadToken() (string, string, error) {
@@ -14,8 +18,24 @@ func loadToken() (string, string, error) {
 		return tok, "", nil
 	}
 
-	out, err := exec.Command(
-		"security", "find-generic-password",
+	if runtime.GOOS != "darwin" {
+		return "", "", fmt.Errorf("CLAUDE_OAUTH_TOKEN must be set (Keychain auto-detection is macOS-only)")
+	}
+
+	securityPath := "/usr/bin/security"
+	if _, err := os.Stat(securityPath); err != nil {
+		// Fallback for unusual setups; still prefer an absolute path when possible.
+		if lp, lookErr := exec.LookPath("security"); lookErr == nil && filepath.IsAbs(lp) {
+			securityPath = lp
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	out, err := exec.CommandContext(
+		ctx,
+		securityPath, "find-generic-password",
 		"-s", "Claude Code-credentials",
 		"-w",
 	).Output()
