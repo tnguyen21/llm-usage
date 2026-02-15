@@ -28,13 +28,9 @@ var (
 			Bold(true).
 			Foreground(lipgloss.Color("99"))
 
-	labelStyle = lipgloss.NewStyle().
-			Width(16).
-			Foreground(lipgloss.Color("252"))
+	labelColor = lipgloss.Color("252")
 
-	resetStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("243")).
-			MarginLeft(16)
+	resetColor = lipgloss.Color("243")
 
 	percentStyle = lipgloss.NewStyle().
 			Width(6).
@@ -50,11 +46,6 @@ var (
 
 	footerStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("243"))
-
-	borderStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("99")).
-			Padding(1, 2)
 )
 
 // model
@@ -70,12 +61,51 @@ type model struct {
 	opusBar    progress.Model
 	spinner    spinner.Model
 
-	loading  bool
-	width    int
-	height   int
-	token    string
-	subType  string
+	loading     bool
+	width       int
+	height      int
+	token       string
+	subType     string
 	lastRefresh time.Time // debounce
+}
+
+// narrow returns true when the terminal is too tight for the full layout
+func (m model) narrow() bool {
+	return m.contentWidth() < 44
+}
+
+// contentWidth returns usable width inside the border
+func (m model) contentWidth() int {
+	if m.width <= 0 {
+		return 50
+	}
+	pad := 6 // 2 border + 4 padding
+	if m.narrow2() {
+		pad = 4 // 2 border + 2 padding
+	}
+	return m.width - pad
+}
+
+// narrow2 is the raw width check (no contentWidth recursion)
+func (m model) narrow2() bool {
+	return m.width < 35
+}
+
+func (m model) labelWidth() int {
+	if m.narrow() {
+		return 6
+	}
+	return 16
+}
+
+func (m model) borderStyle() lipgloss.Style {
+	s := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("99"))
+	if m.narrow2() {
+		return s.Padding(0, 1)
+	}
+	return s.Padding(1, 2)
 }
 
 func newModel(token, subType string) model {
@@ -126,6 +156,16 @@ func tickCmd() tea.Cmd {
 	})
 }
 
+func (m *model) resizeBars() {
+	cw := m.contentWidth()
+	// bar = content - label - " " - percent(6)
+	barWidth := cw - m.labelWidth() - 7
+	barWidth = max(8, min(barWidth, 40))
+	m.sessionBar.Width = barWidth
+	m.weeklyBar.Width = barWidth
+	m.opusBar.Width = barWidth
+}
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 
@@ -146,7 +186,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		if msg.err != nil {
 			if m.usage != nil {
-				// keep stale data
 				m.stale = true
 				m.err = msg.err
 			} else {
@@ -178,10 +217,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		barWidth := max(20, min(msg.Width-40, 40))
-		m.sessionBar.Width = barWidth
-		m.weeklyBar.Width = barWidth
-		m.opusBar.Width = barWidth
+		m.resizeBars()
 		return m, nil
 
 	case spinner.TickMsg:
@@ -191,12 +227,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case progress.FrameMsg:
 		var cmds []tea.Cmd
-		var cmd tea.Cmd
 
 		pm, c := m.sessionBar.Update(msg)
 		m.sessionBar = pm.(progress.Model)
-		cmd = c
-		cmds = append(cmds, cmd)
+		cmds = append(cmds, c)
 
 		pm, c = m.weeklyBar.Update(msg)
 		m.weeklyBar = pm.(progress.Model)
@@ -231,28 +265,41 @@ func (m model) View() string {
 
 	// error only (no data yet)
 	if m.err != nil && m.usage == nil {
-		b.WriteString(errorStyle.Render("  " + m.err.Error()) + "\n")
-		return borderStyle.Render(b.String())
+		b.WriteString(errorStyle.Render("  "+m.err.Error()) + "\n")
+		return m.borderStyle().Render(b.String())
 	}
 
+	narrow := m.narrow()
+	lw := m.labelWidth()
+	resetIndent := lw
+
 	if m.usage != nil {
-		// session bar
 		if m.usage.FiveHour != nil {
-			b.WriteString(renderBar("Session (5h)", m.sessionBar, m.usage.FiveHour))
+			label := "Session (5h)"
+			if narrow {
+				label = "5h"
+			}
+			b.WriteString(m.renderBar(label, m.sessionBar, m.usage.FiveHour, lw, resetIndent))
 		}
-		// weekly bar
 		if m.usage.SevenDay != nil {
-			b.WriteString(renderBar("Weekly (7d)", m.weeklyBar, m.usage.SevenDay))
+			label := "Weekly (7d)"
+			if narrow {
+				label = "7d"
+			}
+			b.WriteString(m.renderBar(label, m.weeklyBar, m.usage.SevenDay, lw, resetIndent))
 		}
-		// opus bar
 		if m.usage.SevenDayOpus != nil {
-			b.WriteString(renderBar("Opus (7d)", m.opusBar, m.usage.SevenDayOpus))
+			label := "Opus (7d)"
+			if narrow {
+				label = "Opus"
+			}
+			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw, resetIndent))
 		}
 	}
 
 	// stale error
 	if m.stale && m.err != nil {
-		b.WriteString(staleStyle.Render("  " + m.err.Error()) + "\n\n")
+		b.WriteString(staleStyle.Render("  "+m.err.Error()) + "\n\n")
 	}
 
 	// footer
@@ -270,20 +317,22 @@ func (m model) View() string {
 		b.WriteString(footerStyle.Render(footer))
 	}
 
-	return borderStyle.Render(b.String())
+	return m.borderStyle().Render(b.String())
 }
 
-func renderBar(label string, bar progress.Model, bucket *UsageBucket) string {
+func (m model) renderBar(label string, bar progress.Model, bucket *UsageBucket, labelWidth, resetIndent int) string {
 	pct := bucket.Utilization
 	pctStr := percentStyle.Render(fmt.Sprintf("%.0f%%", pct))
-	line := labelStyle.Render(label) + bar.View() + " " + pctStr + "\n"
+	labelStr := lipgloss.NewStyle().Width(labelWidth).Foreground(labelColor).Render(label)
+	line := labelStr + bar.View() + " " + pctStr + "\n"
 
-	resetLine := ""
+	resetStr := ""
 	if bucket.ResetsAt != nil {
-		resetLine = resetStyle.Render(formatReset(*bucket.ResetsAt)) + "\n"
+		resetStr = formatReset(*bucket.ResetsAt)
 	} else {
-		resetLine = resetStyle.Render("—") + "\n"
+		resetStr = "—"
 	}
+	resetLine := lipgloss.NewStyle().Foreground(resetColor).MarginLeft(resetIndent).Render(resetStr) + "\n"
 
 	return line + resetLine + "\n"
 }
