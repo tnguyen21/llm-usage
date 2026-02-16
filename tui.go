@@ -187,7 +187,7 @@ func (m *model) resizeBars() {
 	cw := m.contentWidth()
 	// bar = content - label - " " - percent(6)
 	barWidth := cw - m.labelWidth() - 7
-	barWidth = max(8, min(barWidth, 20))
+	barWidth = max(8, min(barWidth, 30))
 	m.sessionBar.Width = barWidth
 	m.weeklyBar.Width = barWidth
 	m.opusBar.Width = barWidth
@@ -342,6 +342,7 @@ func (m model) View() string {
 			}
 			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw))
 		}
+		b.WriteString(m.renderResets())
 	}
 
 	// token counts
@@ -362,13 +363,22 @@ func (m model) renderBar(label string, bar progress.Model, bucket *UsageBucket, 
 	pct := bucket.Utilization
 	pctStr := percentStyle.Render(fmt.Sprintf("%.0f%%", pct))
 	labelStr := lipgloss.NewStyle().Width(labelWidth).Foreground(labelColor).Render(label)
+	return labelStr + bar.View() + " " + pctStr + "\n"
+}
 
-	resetStr := ""
-	if bucket.ResetsAt != nil {
-		resetStr = "  " + lipgloss.NewStyle().Foreground(resetColor).Render(formatReset(*bucket.ResetsAt))
+func (m model) renderResets() string {
+	dim := lipgloss.NewStyle().Foreground(resetColor)
+	var parts []string
+	if m.usage.FiveHour != nil && m.usage.FiveHour.ResetsAt != nil {
+		parts = append(parts, "5h: "+formatReset(*m.usage.FiveHour.ResetsAt))
 	}
-
-	return labelStr + bar.View() + " " + pctStr + resetStr + "\n"
+	if m.usage.SevenDay != nil && m.usage.SevenDay.ResetsAt != nil {
+		parts = append(parts, "7d: "+formatReset(*m.usage.SevenDay.ResetsAt))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return dim.Render(strings.Join(parts, "  ")) + "\n"
 }
 
 func (m model) renderTokenSection() string {
