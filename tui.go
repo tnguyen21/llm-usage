@@ -21,6 +21,12 @@ type usageFetchedMsg struct {
 
 type tickMsg time.Time
 
+type tokensFetchedMsg struct {
+	today TokenStats
+	week  TokenStats
+	err   error
+}
+
 // styles
 
 var (
@@ -67,6 +73,10 @@ type model struct {
 	token       string
 	subType     string
 	lastRefresh time.Time // debounce
+
+	tokensToday TokenStats
+	tokens7d    TokenStats
+	tokensErr   error
 }
 
 // narrow returns true when the terminal is too tight for the full layout
@@ -139,6 +149,7 @@ func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		fetchCmd(m.token),
+		fetchTokensCmd(),
 		tickCmd(),
 	)
 }
@@ -154,6 +165,22 @@ func tickCmd() tea.Cmd {
 	return tea.Tick(5*time.Minute, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
+}
+
+func fetchTokensCmd() tea.Cmd {
+	return func() tea.Msg {
+		now := time.Now()
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		today, err := scanTokens(startOfDay)
+		if err != nil {
+			return tokensFetchedMsg{err: err}
+		}
+		week, err := scanTokens(now.AddDate(0, 0, -7))
+		if err != nil {
+			return tokensFetchedMsg{today: today, err: err}
+		}
+		return tokensFetchedMsg{today: today, week: week}
+	}
 }
 
 func (m *model) resizeBars() {
@@ -179,7 +206,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.loading = true
 			m.lastRefresh = time.Now()
-			return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token))
+			return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchTokensCmd())
 		}
 
 	case usageFetchedMsg:
@@ -210,9 +237,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case tokensFetchedMsg:
+		if msg.err == nil {
+			m.tokensToday = msg.today
+			m.tokens7d = msg.week
+		}
+		m.tokensErr = msg.err
+		return m, nil
+
 	case tickMsg:
 		m.loading = true
-		return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), tickCmd())
+		return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchTokensCmd(), tickCmd())
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -297,6 +332,11 @@ func (m model) View() string {
 		}
 	}
 
+	// token counts
+	if m.tokensToday.Total() > 0 || m.tokens7d.Total() > 0 {
+		b.WriteString(m.renderTokenSection())
+	}
+
 	// stale error
 	if m.stale && m.err != nil {
 		b.WriteString(staleStyle.Render("  "+m.err.Error()) + "\n\n")
@@ -335,6 +375,42 @@ func (m model) renderBar(label string, bar progress.Model, bucket *UsageBucket, 
 	resetLine := lipgloss.NewStyle().Foreground(resetColor).MarginLeft(resetIndent).Render(resetStr) + "\n"
 
 	return line + resetLine + "\n"
+}
+
+func (m model) renderTokenSection() string {
+	var b strings.Builder
+	narrow := m.narrow()
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	valStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	todayLabel := "Today"
+	weekLabel := "Last 7 days"
+	if narrow {
+		todayLabel = "1d"
+		weekLabel = "7d"
+	}
+
+	lw := m.labelWidth()
+
+	renderRow := func(label string, stats TokenStats) string {
+		labelStr := lipgloss.NewStyle().Width(lw).Foreground(labelColor).Render(label)
+		in := valStyle.Render(formatTokenCount(stats.InputTokens))
+		out := valStyle.Render(formatTokenCount(stats.OutputTokens))
+		inLabel := dimStyle.Render(" in  ")
+		outLabel := dimStyle.Render(" out")
+		return labelStr + in + inLabel + out + outLabel + "\n"
+	}
+
+	if m.tokensToday.Total() > 0 {
+		b.WriteString(renderRow(todayLabel, m.tokensToday))
+	}
+	if m.tokens7d.Total() > 0 {
+		b.WriteString(renderRow(weekLabel, m.tokens7d))
+	}
+	b.WriteString("\n")
+
+	return b.String()
 }
 
 func formatReset(iso string) string {

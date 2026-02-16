@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -46,6 +47,13 @@ func runCompact() {
 	}
 	if usage.SevenDay != nil {
 		parts = append(parts, fmt.Sprintf("7d:%.0f%%", usage.SevenDay.Utilization))
+	}
+
+	// add token total
+	now := time.Now()
+	week, err := scanTokens(now.AddDate(0, 0, -7))
+	if err == nil && week.Total() > 0 {
+		parts = append(parts, "tok:"+formatTokenCount(week.Total()))
 	}
 
 	for i, p := range parts {

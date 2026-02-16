@@ -15,6 +15,19 @@ type UsageBucket struct {
 	ResetsAt    *string `json:"resets_at"`   // ISO 8601 or null
 }
 
+type jsonlEntry struct {
+	Type      string `json:"type"`
+	Timestamp string `json:"timestamp"`
+	Message   *struct {
+		Usage *struct {
+			InputTokens              int `json:"input_tokens"`
+			OutputTokens             int `json:"output_tokens"`
+			CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+			CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		} `json:"usage"`
+	} `json:"message"`
+}
+
 type KeychainCredentials struct {
 	ClaudeAiOauth *OAuthEntry `json:"claudeAiOauth"`
 }
