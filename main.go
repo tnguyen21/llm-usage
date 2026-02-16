@@ -46,10 +46,10 @@ func runCompact() {
 	// Claude
 	var claudeParts []string
 	if usage.FiveHour != nil {
-		claudeParts = append(claudeParts, fmt.Sprintf("5h:%.0f%%", usage.FiveHour.Utilization))
+		claudeParts = append(claudeParts, fmt.Sprintf("5h:%.0f%%", 100-usage.FiveHour.Utilization))
 	}
 	if usage.SevenDay != nil {
-		claudeParts = append(claudeParts, fmt.Sprintf("7d:%.0f%%", usage.SevenDay.Utilization))
+		claudeParts = append(claudeParts, fmt.Sprintf("7d:%.0f%%", 100-usage.SevenDay.Utilization))
 	}
 	if len(claudeParts) > 0 {
 		parts = append(parts, "claude:"+joinWith(claudeParts, ","))

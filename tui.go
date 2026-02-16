@@ -154,8 +154,9 @@ func newModel(token, subType string) model {
 }
 
 func newBar(width int) progress.Model {
+	// HP bar: red at low, green at high
 	p := progress.New(
-		progress.WithScaledGradient("#76EEC6", "#FF6347"),
+		progress.WithScaledGradient("#FF6347", "#76EEC6"),
 		progress.WithWidth(width),
 		progress.WithoutPercentage(),
 	)
@@ -264,13 +265,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		var cmds []tea.Cmd
 		if m.usage.FiveHour != nil {
-			cmds = append(cmds, m.sessionBar.SetPercent(m.usage.FiveHour.Utilization/100))
+			cmds = append(cmds, m.sessionBar.SetPercent((100-m.usage.FiveHour.Utilization)/100))
 		}
 		if m.usage.SevenDay != nil {
-			cmds = append(cmds, m.weeklyBar.SetPercent(m.usage.SevenDay.Utilization/100))
+			cmds = append(cmds, m.weeklyBar.SetPercent((100-m.usage.SevenDay.Utilization)/100))
 		}
 		if m.usage.SevenDayOpus != nil {
-			cmds = append(cmds, m.opusBar.SetPercent(m.usage.SevenDayOpus.Utilization/100))
+			cmds = append(cmds, m.opusBar.SetPercent((100-m.usage.SevenDayOpus.Utilization)/100))
 		}
 		return m, tea.Batch(cmds...)
 
@@ -391,21 +392,24 @@ func (m model) View() string {
 			if narrow {
 				label = "5h"
 			}
-			b.WriteString(m.renderBar(label, m.sessionBar, m.usage.FiveHour, lw))
+			remaining := &UsageBucket{Utilization: 100 - m.usage.FiveHour.Utilization}
+			b.WriteString(m.renderBar(label, m.sessionBar, remaining, lw))
 		}
 		if m.usage.SevenDay != nil {
 			label := "Weekly (7d)"
 			if narrow {
 				label = "7d"
 			}
-			b.WriteString(m.renderBar(label, m.weeklyBar, m.usage.SevenDay, lw))
+			remaining := &UsageBucket{Utilization: 100 - m.usage.SevenDay.Utilization}
+			b.WriteString(m.renderBar(label, m.weeklyBar, remaining, lw))
 		}
 		if m.usage.SevenDayOpus != nil {
 			label := "Opus (7d)"
 			if narrow {
 				label = "Opus"
 			}
-			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw))
+			remaining := &UsageBucket{Utilization: 100 - m.usage.SevenDayOpus.Utilization}
+			b.WriteString(m.renderBar(label, m.opusBar, remaining, lw))
 		}
 		b.WriteString(m.renderResets())
 	}
