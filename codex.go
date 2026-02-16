@@ -263,20 +263,31 @@ func parseCodexFile(path string) (*CodexUsage, error) {
 		return nil, fmt.Errorf("no rate_limits in file")
 	}
 
+	now := time.Now()
 	usage := &CodexUsage{}
 	if lastRL.Primary != nil {
-		usage.Primary = &CodexBucket{
+		b := &CodexBucket{
 			UsedPercent:   lastRL.Primary.UsedPercent,
 			WindowMinutes: lastRL.Primary.WindowMinutes,
 			ResetsAt:      lastRL.Primary.ResetsAt,
 		}
+		if b.ResetsAt > 0 && b.ResetsAtTime().Before(now) {
+			b.UsedPercent = 0
+			b.ResetsAt = 0
+		}
+		usage.Primary = b
 	}
 	if lastRL.Secondary != nil {
-		usage.Secondary = &CodexBucket{
+		b := &CodexBucket{
 			UsedPercent:   lastRL.Secondary.UsedPercent,
 			WindowMinutes: lastRL.Secondary.WindowMinutes,
 			ResetsAt:      lastRL.Secondary.ResetsAt,
 		}
+		if b.ResetsAt > 0 && b.ResetsAtTime().Before(now) {
+			b.UsedPercent = 0
+			b.ResetsAt = 0
+		}
+		usage.Secondary = b
 	}
 
 	return usage, nil
