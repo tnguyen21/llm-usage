@@ -19,6 +19,11 @@ type usageFetchedMsg struct {
 	err   error
 }
 
+type codexFetchedMsg struct {
+	usage *CodexUsage
+	err   error
+}
+
 type tickMsg time.Time
 
 type tokensFetchedMsg struct {
@@ -33,6 +38,10 @@ var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
 			Foreground(lipgloss.Color("99"))
+
+	sectionStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("252"))
 
 	labelColor = lipgloss.Color("252")
 
@@ -66,6 +75,12 @@ type model struct {
 	weeklyBar  progress.Model
 	opusBar    progress.Model
 	spinner    spinner.Model
+
+	// Codex
+	codexUsage      *CodexUsage
+	codexErr        error
+	codexSessionBar progress.Model
+	codexWeeklyBar  progress.Model
 
 	loading     bool
 	width       int
@@ -126,13 +141,15 @@ func newModel(token, subType string) model {
 	barWidth := 30
 
 	return model{
-		sessionBar: newBar(barWidth),
-		weeklyBar:  newBar(barWidth),
-		opusBar:    newBar(barWidth),
-		spinner:    s,
-		loading:    true,
-		token:      token,
-		subType:    subType,
+		sessionBar:      newBar(barWidth),
+		weeklyBar:       newBar(barWidth),
+		opusBar:         newBar(barWidth),
+		codexSessionBar: newCodexBar(barWidth),
+		codexWeeklyBar:  newCodexBar(barWidth),
+		spinner:         s,
+		loading:         true,
+		token:           token,
+		subType:         subType,
 	}
 }
 
@@ -145,10 +162,20 @@ func newBar(width int) progress.Model {
 	return p
 }
 
+func newCodexBar(width int) progress.Model {
+	p := progress.New(
+		progress.WithScaledGradient("#76EEC6", "#4FC1E8"),
+		progress.WithWidth(width),
+		progress.WithoutPercentage(),
+	)
+	return p
+}
+
 func (m model) Init() tea.Cmd {
 	return tea.Batch(
 		m.spinner.Tick,
 		fetchCmd(m.token),
+		fetchCodexCmd(),
 		fetchTokensCmd(),
 		tickCmd(),
 	)
@@ -158,6 +185,13 @@ func fetchCmd(token string) tea.Cmd {
 	return func() tea.Msg {
 		usage, err := fetchUsage(token)
 		return usageFetchedMsg{usage: usage, err: err}
+	}
+}
+
+func fetchCodexCmd() tea.Cmd {
+	return func() tea.Msg {
+		usage, err := fetchCodexUsage()
+		return codexFetchedMsg{usage: usage, err: err}
 	}
 }
 
@@ -191,6 +225,8 @@ func (m *model) resizeBars() {
 	m.sessionBar.Width = barWidth
 	m.weeklyBar.Width = barWidth
 	m.opusBar.Width = barWidth
+	m.codexSessionBar.Width = barWidth
+	m.codexWeeklyBar.Width = barWidth
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -206,7 +242,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.loading = true
 			m.lastRefresh = time.Now()
-			return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchTokensCmd())
+			return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd())
 		}
 
 	case usageFetchedMsg:
@@ -237,6 +273,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 
+	case codexFetchedMsg:
+		if msg.err == nil {
+			m.codexUsage = msg.usage
+			var cmds []tea.Cmd
+			if m.codexUsage.Primary != nil {
+				cmds = append(cmds, m.codexSessionBar.SetPercent(m.codexUsage.Primary.UsedPercent/100))
+			}
+			if m.codexUsage.Secondary != nil {
+				cmds = append(cmds, m.codexWeeklyBar.SetPercent(m.codexUsage.Secondary.UsedPercent/100))
+			}
+			return m, tea.Batch(cmds...)
+		}
+		m.codexErr = msg.err
+		return m, nil
+
 	case tokensFetchedMsg:
 		if msg.err == nil {
 			m.tokensToday = msg.today
@@ -247,7 +298,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.loading = true
-		return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchTokensCmd(), tickCmd())
+		return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd(), tickCmd())
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -275,6 +326,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.opusBar = pm.(progress.Model)
 		cmds = append(cmds, c)
 
+		pm, c = m.codexSessionBar.Update(msg)
+		m.codexSessionBar = pm.(progress.Model)
+		cmds = append(cmds, c)
+
+		pm, c = m.codexWeeklyBar.Update(msg)
+		m.codexWeeklyBar = pm.(progress.Model)
+		cmds = append(cmds, c)
+
 		return m, tea.Batch(cmds...)
 	}
 
@@ -286,7 +345,7 @@ func (m model) View() string {
 
 	// title row
 	cw := m.contentWidth()
-	title := titleStyle.Render("claude-usage")
+	title := titleStyle.Render("llm-usage")
 	if m.loading {
 		title += "  " + m.spinner.View()
 	} else if m.stale {
@@ -312,15 +371,20 @@ func (m model) View() string {
 	}
 
 	// error only (no data yet)
-	if m.err != nil && m.usage == nil {
+	if m.err != nil && m.usage == nil && m.codexUsage == nil {
 		b.WriteString(errorStyle.Render("  "+m.err.Error()) + "\n")
 		return m.borderStyle().Render(b.String())
 	}
 
 	narrow := m.narrow()
 	lw := m.labelWidth()
+	hasCodex := m.codexUsage != nil
 
+	// Claude section
 	if m.usage != nil {
+		if hasCodex {
+			b.WriteString(sectionStyle.Render("Claude") + "\n")
+		}
 		if m.usage.FiveHour != nil {
 			label := "Session (5h)"
 			if narrow {
@@ -343,6 +407,31 @@ func (m model) View() string {
 			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw))
 		}
 		b.WriteString(m.renderResets())
+	}
+
+	// Codex section
+	if hasCodex {
+		if m.usage != nil {
+			b.WriteString("\n")
+		}
+		b.WriteString(sectionStyle.Render("Codex") + "\n")
+		if m.codexUsage.Primary != nil {
+			label := "Session (5h)"
+			if narrow {
+				label = "5h"
+			}
+			bucket := &UsageBucket{Utilization: m.codexUsage.Primary.UsedPercent}
+			b.WriteString(m.renderBar(label, m.codexSessionBar, bucket, lw))
+		}
+		if m.codexUsage.Secondary != nil {
+			label := "Weekly"
+			if narrow {
+				label = "7d"
+			}
+			bucket := &UsageBucket{Utilization: m.codexUsage.Secondary.UsedPercent}
+			b.WriteString(m.renderBar(label, m.codexWeeklyBar, bucket, lw))
+		}
+		b.WriteString(m.renderCodexResets())
 	}
 
 	// token counts
@@ -374,6 +463,23 @@ func (m model) renderResets() string {
 	}
 	if m.usage.SevenDay != nil && m.usage.SevenDay.ResetsAt != nil {
 		parts = append(parts, "7d: "+formatReset(*m.usage.SevenDay.ResetsAt))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return dim.Render(strings.Join(parts, "  ")) + "\n"
+}
+
+func (m model) renderCodexResets() string {
+	dim := lipgloss.NewStyle().Foreground(resetColor)
+	var parts []string
+	if m.codexUsage.Primary != nil && m.codexUsage.Primary.ResetsAt > 0 {
+		t := m.codexUsage.Primary.ResetsAtTime()
+		parts = append(parts, "5h: "+formatReset(t.Format(time.RFC3339)))
+	}
+	if m.codexUsage.Secondary != nil && m.codexUsage.Secondary.ResetsAt > 0 {
+		t := m.codexUsage.Secondary.ResetsAtTime()
+		parts = append(parts, "7d: "+formatReset(t.Format(time.RFC3339)))
 	}
 	if len(parts) == 0 {
 		return ""

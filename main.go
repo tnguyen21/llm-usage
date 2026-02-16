@@ -42,14 +42,35 @@ func runCompact() {
 	}
 
 	parts := []string{}
+
+	// Claude
+	var claudeParts []string
 	if usage.FiveHour != nil {
-		parts = append(parts, fmt.Sprintf("5h:%.0f%%", usage.FiveHour.Utilization))
+		claudeParts = append(claudeParts, fmt.Sprintf("5h:%.0f%%", usage.FiveHour.Utilization))
 	}
 	if usage.SevenDay != nil {
-		parts = append(parts, fmt.Sprintf("7d:%.0f%%", usage.SevenDay.Utilization))
+		claudeParts = append(claudeParts, fmt.Sprintf("7d:%.0f%%", usage.SevenDay.Utilization))
+	}
+	if len(claudeParts) > 0 {
+		parts = append(parts, "claude:"+joinWith(claudeParts, ","))
 	}
 
-	// add token total
+	// Codex
+	codexUsage, codexErr := fetchCodexUsage()
+	if codexErr == nil && codexUsage != nil {
+		var codexParts []string
+		if codexUsage.Primary != nil {
+			codexParts = append(codexParts, fmt.Sprintf("5h:%.0f%%", codexUsage.Primary.UsedPercent))
+		}
+		if codexUsage.Secondary != nil {
+			codexParts = append(codexParts, fmt.Sprintf("7d:%.0f%%", codexUsage.Secondary.UsedPercent))
+		}
+		if len(codexParts) > 0 {
+			parts = append(parts, "codex:"+joinWith(codexParts, ","))
+		}
+	}
+
+	// Token total
 	now := time.Now()
 	week, err := scanTokens(now.AddDate(0, 0, -7))
 	if err == nil && week.Total() > 0 {
@@ -63,4 +84,15 @@ func runCompact() {
 		fmt.Print(p)
 	}
 	fmt.Println()
+}
+
+func joinWith(parts []string, sep string) string {
+	result := ""
+	for i, p := range parts {
+		if i > 0 {
+			result += sep
+		}
+		result += p
+	}
+	return result
 }

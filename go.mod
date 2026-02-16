@@ -1,4 +1,4 @@
-module github.com/tau/claude-usage
+module github.com/tau/llm-usage
 
 go 1.25.0
 
