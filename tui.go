@@ -115,7 +115,7 @@ func (m model) borderStyle() lipgloss.Style {
 	if m.narrow2() {
 		return s.Padding(0, 1)
 	}
-	return s.Padding(1, 2)
+	return s.Padding(0, 2)
 }
 
 func newModel(token, subType string) model {
@@ -306,9 +306,9 @@ func (m model) View() string {
 	}
 	if right != "" {
 		titleRow := title + footerStyle.Render(strings.Repeat(" ", max(1, cw-lipgloss.Width(title)-lipgloss.Width(right)))+right)
-		b.WriteString(titleRow + "\n\n")
+		b.WriteString(titleRow + "\n")
 	} else {
-		b.WriteString(title + "\n\n")
+		b.WriteString(title + "\n")
 	}
 
 	// error only (no data yet)
@@ -319,7 +319,6 @@ func (m model) View() string {
 
 	narrow := m.narrow()
 	lw := m.labelWidth()
-	resetIndent := lw
 
 	if m.usage != nil {
 		if m.usage.FiveHour != nil {
@@ -327,21 +326,21 @@ func (m model) View() string {
 			if narrow {
 				label = "5h"
 			}
-			b.WriteString(m.renderBar(label, m.sessionBar, m.usage.FiveHour, lw, resetIndent))
+			b.WriteString(m.renderBar(label, m.sessionBar, m.usage.FiveHour, lw))
 		}
 		if m.usage.SevenDay != nil {
 			label := "Weekly (7d)"
 			if narrow {
 				label = "7d"
 			}
-			b.WriteString(m.renderBar(label, m.weeklyBar, m.usage.SevenDay, lw, resetIndent))
+			b.WriteString(m.renderBar(label, m.weeklyBar, m.usage.SevenDay, lw))
 		}
 		if m.usage.SevenDayOpus != nil {
 			label := "Opus (7d)"
 			if narrow {
 				label = "Opus"
 			}
-			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw, resetIndent))
+			b.WriteString(m.renderBar(label, m.opusBar, m.usage.SevenDayOpus, lw))
 		}
 	}
 
@@ -358,21 +357,17 @@ func (m model) View() string {
 	return m.borderStyle().Render(b.String())
 }
 
-func (m model) renderBar(label string, bar progress.Model, bucket *UsageBucket, labelWidth, resetIndent int) string {
+func (m model) renderBar(label string, bar progress.Model, bucket *UsageBucket, labelWidth int) string {
 	pct := bucket.Utilization
 	pctStr := percentStyle.Render(fmt.Sprintf("%.0f%%", pct))
 	labelStr := lipgloss.NewStyle().Width(labelWidth).Foreground(labelColor).Render(label)
-	line := labelStr + bar.View() + " " + pctStr + "\n"
 
 	resetStr := ""
 	if bucket.ResetsAt != nil {
-		resetStr = formatReset(*bucket.ResetsAt)
-	} else {
-		resetStr = "—"
+		resetStr = "  " + lipgloss.NewStyle().Foreground(resetColor).Render(formatReset(*bucket.ResetsAt))
 	}
-	resetLine := lipgloss.NewStyle().Foreground(resetColor).MarginLeft(resetIndent).Render(resetStr) + "\n"
 
-	return line + resetLine + "\n"
+	return labelStr + bar.View() + " " + pctStr + resetStr + "\n"
 }
 
 func (m model) renderTokenSection() string {
@@ -407,7 +402,6 @@ func (m model) renderTokenSection() string {
 	if m.tokens7d.Total() > 0 {
 		b.WriteString(renderRow(weekLabel, m.tokens7d))
 	}
-	b.WriteString("\n")
 
 	return b.String()
 }
