@@ -163,8 +163,9 @@ func newBar(width int) progress.Model {
 }
 
 func newCodexBar(width int) progress.Model {
+	// HP bar: green at full health, red when depleted
 	p := progress.New(
-		progress.WithScaledGradient("#76EEC6", "#4FC1E8"),
+		progress.WithScaledGradient("#FF6347", "#76EEC6"),
 		progress.WithWidth(width),
 		progress.WithoutPercentage(),
 	)
@@ -278,10 +279,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.codexUsage = msg.usage
 			var cmds []tea.Cmd
 			if m.codexUsage.Primary != nil {
-				cmds = append(cmds, m.codexSessionBar.SetPercent(m.codexUsage.Primary.UsedPercent/100))
+				cmds = append(cmds, m.codexSessionBar.SetPercent((100-m.codexUsage.Primary.UsedPercent)/100))
 			}
 			if m.codexUsage.Secondary != nil {
-				cmds = append(cmds, m.codexWeeklyBar.SetPercent(m.codexUsage.Secondary.UsedPercent/100))
+				cmds = append(cmds, m.codexWeeklyBar.SetPercent((100-m.codexUsage.Secondary.UsedPercent)/100))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -420,7 +421,8 @@ func (m model) View() string {
 			if narrow {
 				label = "5h"
 			}
-			bucket := &UsageBucket{Utilization: m.codexUsage.Primary.UsedPercent}
+			remaining := 100 - m.codexUsage.Primary.UsedPercent
+			bucket := &UsageBucket{Utilization: remaining}
 			b.WriteString(m.renderBar(label, m.codexSessionBar, bucket, lw))
 		}
 		if m.codexUsage.Secondary != nil {
@@ -428,7 +430,8 @@ func (m model) View() string {
 			if narrow {
 				label = "7d"
 			}
-			bucket := &UsageBucket{Utilization: m.codexUsage.Secondary.UsedPercent}
+			remaining := 100 - m.codexUsage.Secondary.UsedPercent
+			bucket := &UsageBucket{Utilization: remaining}
 			b.WriteString(m.renderBar(label, m.codexWeeklyBar, bucket, lw))
 		}
 		b.WriteString(m.renderCodexResets())

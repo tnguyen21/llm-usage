@@ -60,10 +60,10 @@ func runCompact() {
 	if codexErr == nil && codexUsage != nil {
 		var codexParts []string
 		if codexUsage.Primary != nil {
-			codexParts = append(codexParts, fmt.Sprintf("5h:%.0f%%", codexUsage.Primary.UsedPercent))
+			codexParts = append(codexParts, fmt.Sprintf("5h:%.0f%%", 100-codexUsage.Primary.UsedPercent))
 		}
 		if codexUsage.Secondary != nil {
-			codexParts = append(codexParts, fmt.Sprintf("7d:%.0f%%", codexUsage.Secondary.UsedPercent))
+			codexParts = append(codexParts, fmt.Sprintf("7d:%.0f%%", 100-codexUsage.Secondary.UsedPercent))
 		}
 		if len(codexParts) > 0 {
 			parts = append(parts, "codex:"+joinWith(codexParts, ","))
