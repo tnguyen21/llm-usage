@@ -32,6 +32,13 @@ type tokensFetchedMsg struct {
 	err   error
 }
 
+type calendarFetchedMsg struct {
+	data  DailyTokenStats
+	year  int
+	month time.Month
+	err   error
+}
+
 // styles
 
 var (
@@ -92,6 +99,11 @@ type model struct {
 	tokensToday TokenStats
 	tokens7d    TokenStats
 	tokensErr   error
+
+	showCalendar  bool
+	calendarData  DailyTokenStats
+	calendarYear  int
+	calendarMonth time.Month
 }
 
 // narrow returns true when the terminal is too tight for the full layout
@@ -219,6 +231,13 @@ func fetchTokensCmd() tea.Cmd {
 	}
 }
 
+func fetchCalendarCmd(year int, month time.Month) tea.Cmd {
+	return func() tea.Msg {
+		data, err := scanAllTokensByDay(year, month)
+		return calendarFetchedMsg{data: data, year: year, month: month, err: err}
+	}
+}
+
 func (m *model) resizeBars() {
 	cw := m.contentWidth()
 	// bar = content - label - " " - percent(6)
@@ -244,7 +263,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.loading = true
 			m.lastRefresh = time.Now()
-			return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd())
+			cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd()}
+			if m.showCalendar {
+				cmds = append(cmds, fetchCalendarCmd(m.calendarYear, m.calendarMonth))
+			}
+			return m, tea.Batch(cmds...)
+		case "c":
+			m.showCalendar = !m.showCalendar
+			if m.showCalendar && m.calendarData == nil {
+				now := time.Now()
+				m.calendarYear = now.Year()
+				m.calendarMonth = now.Month()
+				return m, fetchCalendarCmd(now.Year(), now.Month())
+			}
+			return m, nil
 		}
 
 	case usageFetchedMsg:
@@ -298,9 +330,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.tokensErr = msg.err
 		return m, nil
 
+	case calendarFetchedMsg:
+		if msg.err == nil {
+			m.calendarData = msg.data
+			m.calendarYear = msg.year
+			m.calendarMonth = msg.month
+		}
+		return m, nil
+
 	case tickMsg:
 		m.loading = true
-		return m, tea.Batch(m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd(), tickCmd())
+		cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd(), tickCmd()}
+		if m.showCalendar {
+			cmds = append(cmds, fetchCalendarCmd(m.calendarYear, m.calendarMonth))
+		}
+		return m, tea.Batch(cmds...)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -378,6 +422,11 @@ func (m model) View() string {
 		return m.borderStyle().Render(b.String())
 	}
 
+	if m.showCalendar {
+		b.WriteString(m.renderCalendarContent())
+		return m.borderStyle().Render(b.String())
+	}
+
 	narrow := m.narrow()
 	lw := m.labelWidth()
 	hasCodex := m.codexUsage != nil
@@ -451,6 +500,9 @@ func (m model) View() string {
 	if m.stale && m.err != nil {
 		b.WriteString(staleStyle.Render("  "+m.err.Error()) + "\n\n")
 	}
+
+	// footer hint
+	b.WriteString(footerStyle.Render("  [c] calendar") + "\n")
 
 	return m.borderStyle().Render(b.String())
 }
@@ -526,6 +578,83 @@ func (m model) renderTokenSection() string {
 	if m.tokens7d.Total() > 0 {
 		b.WriteString(renderRow(weekLabel, m.tokens7d))
 	}
+
+	return b.String()
+}
+
+func (m model) renderCalendarContent() string {
+	var b strings.Builder
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	valStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	todayStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
+
+	// Month header
+	monthName := m.calendarMonth.String()
+	b.WriteString(sectionStyle.Render(fmt.Sprintf("%s %d", monthName, m.calendarYear)) + "\n")
+
+	if m.calendarData == nil {
+		b.WriteString("  loading...\n")
+		return b.String()
+	}
+
+	now := time.Now()
+	loc := now.Location()
+	firstDay := time.Date(m.calendarYear, m.calendarMonth, 1, 0, 0, 0, 0, loc)
+	lastDay := firstDay.AddDate(0, 1, -1).Day()
+	narrow := m.narrow()
+
+	var monthTotal TokenStats
+
+	for day := 1; day <= lastDay; day++ {
+		stats, ok := m.calendarData[day]
+		if !ok || stats.Total() == 0 {
+			continue
+		}
+
+		date := time.Date(m.calendarYear, m.calendarMonth, day, 0, 0, 0, 0, loc)
+		isToday := now.Year() == m.calendarYear && now.Month() == m.calendarMonth && now.Day() == day
+
+		dayStr := fmt.Sprintf("%02d", day)
+		weekday := date.Weekday().String()[:3]
+
+		totalIn := stats.InputTokens + stats.CacheCreation + stats.CacheRead
+		inStr := formatTokenCount(totalIn)
+		outStr := formatTokenCount(stats.OutputTokens)
+
+		var line string
+		if narrow {
+			line = fmt.Sprintf("  %s %s %6s %6s", dayStr, weekday, inStr, outStr)
+		} else {
+			line = fmt.Sprintf("  %s  %s  %7s in  %7s out", dayStr, weekday, inStr, outStr)
+		}
+
+		if isToday {
+			b.WriteString(todayStyle.Render(line) + dimStyle.Render(" ←") + "\n")
+		} else {
+			b.WriteString(valStyle.Render(line) + "\n")
+		}
+
+		monthTotal.InputTokens += stats.InputTokens
+		monthTotal.OutputTokens += stats.OutputTokens
+		monthTotal.CacheCreation += stats.CacheCreation
+		monthTotal.CacheRead += stats.CacheRead
+	}
+
+	if monthTotal.Total() > 0 {
+		totalIn := monthTotal.InputTokens + monthTotal.CacheCreation + monthTotal.CacheRead
+		inStr := formatTokenCount(totalIn)
+		outStr := formatTokenCount(monthTotal.OutputTokens)
+		if narrow {
+			b.WriteString(dimStyle.Render("  ──────────────────") + "\n")
+			b.WriteString(valStyle.Render(fmt.Sprintf("       %6s %6s", inStr, outStr)) + "\n")
+		} else {
+			b.WriteString(dimStyle.Render("  ──────────────────────────────") + "\n")
+			b.WriteString(valStyle.Render(fmt.Sprintf("              %7s in  %7s out", inStr, outStr)) + "\n")
+		}
+	}
+
+	b.WriteString(footerStyle.Render("  [c] back") + "\n")
 
 	return b.String()
 }

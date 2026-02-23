@@ -10,15 +10,18 @@ import (
 )
 
 type TokenStats struct {
-	InputTokens    int
-	OutputTokens   int
-	CacheCreation  int
-	CacheRead      int
+	InputTokens   int
+	OutputTokens  int
+	CacheCreation int
+	CacheRead     int
 }
 
 func (t TokenStats) Total() int {
 	return t.InputTokens + t.OutputTokens + t.CacheCreation + t.CacheRead
 }
+
+// DailyTokenStats maps day-of-month (1-31) to TokenStats.
+type DailyTokenStats map[int]TokenStats
 
 func claudeSessionDirs() []string {
 	home, err := os.UserHomeDir()
@@ -154,6 +157,113 @@ func scanClaudeFileTokens(path string, since time.Time, stats *TokenStats) {
 		stats.CacheCreation += u.cacheCreate
 		stats.CacheRead += u.cacheRead
 	}
+}
+
+// scanClaudeTokensByDay scans Claude JSONL files and buckets token usage by day of month.
+func scanClaudeTokensByDay(year int, month time.Month) (DailyTokenStats, error) {
+	daily := make(DailyTokenStats)
+	dirs := claudeSessionDirs()
+	if len(dirs) == 0 {
+		return daily, nil
+	}
+
+	loc := time.Now().Location()
+	since := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	until := since.AddDate(0, 1, 0)
+
+	for _, root := range dirs {
+		filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+				return nil
+			}
+			if info, err := d.Info(); err == nil && info.ModTime().Before(since) {
+				return nil
+			}
+			scanClaudeFileTokensByDay(path, since, until, daily)
+			return nil
+		})
+	}
+	return daily, nil
+}
+
+func scanClaudeFileTokensByDay(path string, since, until time.Time, daily DailyTokenStats) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	type usage struct {
+		in, out, cacheCreate, cacheRead int
+		day                             int
+	}
+	seen := make(map[string]usage)
+	var anonymous []usage
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 512*1024), 512*1024)
+	for scanner.Scan() {
+		var entry jsonlEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if entry.Type != "assistant" || entry.Message == nil || entry.Message.Usage == nil {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+		if err != nil || ts.Before(since) || !ts.Before(until) {
+			continue
+		}
+
+		u := usage{
+			in:          entry.Message.Usage.InputTokens,
+			out:         entry.Message.Usage.OutputTokens,
+			cacheCreate: entry.Message.Usage.CacheCreationInputTokens,
+			cacheRead:   entry.Message.Usage.CacheReadInputTokens,
+			day:         ts.Day(),
+		}
+		if entry.Message.ID != "" {
+			seen[entry.Message.ID] = u
+		} else {
+			anonymous = append(anonymous, u)
+		}
+	}
+
+	add := func(u usage) {
+		s := daily[u.day]
+		s.InputTokens += u.in
+		s.OutputTokens += u.out
+		s.CacheCreation += u.cacheCreate
+		s.CacheRead += u.cacheRead
+		daily[u.day] = s
+	}
+	for _, u := range seen {
+		add(u)
+	}
+	for _, u := range anonymous {
+		add(u)
+	}
+}
+
+// scanAllTokensByDay combines Claude + Codex per-day token counts.
+func scanAllTokensByDay(year int, month time.Month) (DailyTokenStats, error) {
+	claude, err := scanClaudeTokensByDay(year, month)
+	if err != nil {
+		return claude, err
+	}
+	codex, err := scanCodexTokensByDay(year, month)
+	if err != nil {
+		return claude, err
+	}
+	for day, cs := range codex {
+		s := claude[day]
+		s.InputTokens += cs.InputTokens
+		s.OutputTokens += cs.OutputTokens
+		s.CacheCreation += cs.CacheCreation
+		s.CacheRead += cs.CacheRead
+		claude[day] = s
+	}
+	return claude, nil
 }
 
 func formatTokenCount(n int) string {

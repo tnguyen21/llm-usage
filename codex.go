@@ -208,6 +208,89 @@ func scanCodexFileTokens(path string, since time.Time, stats *TokenStats) {
 	// CacheCreation stays 0 for Codex (no equivalent field)
 }
 
+// scanCodexTokensByDay scans Codex session files and buckets token usage by day of month.
+func scanCodexTokensByDay(year int, month time.Month) (DailyTokenStats, error) {
+	daily := make(DailyTokenStats)
+	dir := codexSessionDir()
+	if dir == "" {
+		return daily, nil
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return daily, nil
+	}
+
+	loc := time.Now().Location()
+	since := time.Date(year, month, 1, 0, 0, 0, 0, loc)
+	until := since.AddDate(0, 1, 0)
+
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || filepath.Ext(path) != ".jsonl" {
+			return nil
+		}
+		if info, err := d.Info(); err == nil && info.ModTime().Before(since) {
+			return nil
+		}
+		scanCodexFileTokensByDay(path, since, until, daily)
+		return nil
+	})
+	return daily, nil
+}
+
+func scanCodexFileTokensByDay(path string, since, until time.Time, daily DailyTokenStats) {
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+
+	var lastInfo *codexTokenInfo
+	var lastTS time.Time
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 512*1024), 512*1024)
+	for scanner.Scan() {
+		var entry codexJSONLEntry
+		if err := json.Unmarshal(scanner.Bytes(), &entry); err != nil {
+			continue
+		}
+		if entry.Type != "event_msg" || entry.Payload == nil {
+			continue
+		}
+		var payload codexTokenPayload
+		if err := json.Unmarshal(entry.Payload, &payload); err != nil {
+			continue
+		}
+		if payload.Type != "token_count" || payload.Info == nil || payload.Info.TotalTokenUsage == nil {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
+		if err != nil {
+			continue
+		}
+		lastInfo = payload.Info
+		lastTS = ts
+	}
+
+	if lastInfo == nil || lastInfo.TotalTokenUsage == nil {
+		return
+	}
+	if lastTS.Before(since) || !lastTS.Before(until) {
+		return
+	}
+
+	tu := lastInfo.TotalTokenUsage
+	nonCached := tu.InputTokens - tu.CachedInputTokens
+	if nonCached < 0 {
+		nonCached = 0
+	}
+	day := lastTS.Day()
+	s := daily[day]
+	s.InputTokens += nonCached
+	s.CacheRead += tu.CachedInputTokens
+	s.OutputTokens += tu.OutputTokens
+	daily[day] = s
+}
+
 type codexTokenPayload struct {
 	Type string         `json:"type"`
 	Info *codexTokenInfo `json:"info"`
