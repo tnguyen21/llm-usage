@@ -24,6 +24,12 @@ type codexFetchedMsg struct {
 	err   error
 }
 
+type kimiFetchedMsg struct {
+	today TokenStats
+	week  TokenStats
+	err   error
+}
+
 type tickMsg time.Time
 
 type tokensFetchedMsg struct {
@@ -88,6 +94,11 @@ type model struct {
 	codexErr        error
 	codexSessionBar progress.Model
 	codexWeeklyBar  progress.Model
+
+	// Kimi (token counts only - no rate limits stored locally)
+	kimiTokensToday TokenStats
+	kimiTokens7d    TokenStats
+	kimiErr         error
 
 	loading     bool
 	width       int
@@ -190,6 +201,7 @@ func (m model) Init() tea.Cmd {
 		m.spinner.Tick,
 		fetchCmd(m.token),
 		fetchCodexCmd(),
+		fetchKimiCmd(),
 		fetchTokensCmd(),
 		tickCmd(),
 	)
@@ -206,6 +218,22 @@ func fetchCodexCmd() tea.Cmd {
 	return func() tea.Msg {
 		usage, err := fetchCodexUsage()
 		return codexFetchedMsg{usage: usage, err: err}
+	}
+}
+
+func fetchKimiCmd() tea.Cmd {
+	return func() tea.Msg {
+		now := time.Now()
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		today, err := scanKimiTokens(startOfDay)
+		if err != nil {
+			return kimiFetchedMsg{err: err}
+		}
+		week, err := scanKimiTokens(now.AddDate(0, 0, -7))
+		if err != nil {
+			return kimiFetchedMsg{today: today, err: err}
+		}
+		return kimiFetchedMsg{today: today, week: week}
 	}
 }
 
@@ -263,7 +291,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.loading = true
 			m.lastRefresh = time.Now()
-			cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd()}
+			cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchKimiCmd(), fetchTokensCmd()}
 			if m.showCalendar {
 				cmds = append(cmds, fetchCalendarCmd(m.calendarYear, m.calendarMonth))
 			}
@@ -322,6 +350,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.codexErr = msg.err
 		return m, nil
 
+	case kimiFetchedMsg:
+		if msg.err == nil {
+			m.kimiTokensToday = msg.today
+			m.kimiTokens7d = msg.week
+		}
+		m.kimiErr = msg.err
+		return m, nil
+
 	case tokensFetchedMsg:
 		if msg.err == nil {
 			m.tokensToday = msg.today
@@ -340,7 +376,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		m.loading = true
-		cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchTokensCmd(), tickCmd()}
+		cmds := []tea.Cmd{m.spinner.Tick, fetchCmd(m.token), fetchCodexCmd(), fetchKimiCmd(), fetchTokensCmd(), tickCmd()}
 		if m.showCalendar {
 			cmds = append(cmds, fetchCalendarCmd(m.calendarYear, m.calendarMonth))
 		}
@@ -490,6 +526,16 @@ func (m model) View() string {
 		b.WriteString(m.renderCodexResets())
 	}
 
+	// Kimi section (token counts only)
+	hasKimi := m.kimiTokensToday.Total() > 0 || m.kimiTokens7d.Total() > 0
+	if hasKimi {
+		if m.usage != nil || hasCodex {
+			b.WriteString("\n")
+		}
+		b.WriteString(sectionStyle.Render("Kimi") + "\n")
+		b.WriteString(m.renderKimiTokenSection())
+	}
+
 	// token counts
 	if m.tokensToday.Total() > 0 || m.tokens7d.Total() > 0 {
 		b.WriteString("\n")
@@ -577,6 +623,42 @@ func (m model) renderTokenSection() string {
 	}
 	if m.tokens7d.Total() > 0 {
 		b.WriteString(renderRow(weekLabel, m.tokens7d))
+	}
+
+	return b.String()
+}
+
+func (m model) renderKimiTokenSection() string {
+	var b strings.Builder
+	narrow := m.narrow()
+
+	dimStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("243"))
+	valStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+
+	todayLabel := "Today"
+	weekLabel := "Last 7 days"
+	if narrow {
+		todayLabel = "1d"
+		weekLabel = "7d"
+	}
+
+	lw := m.labelWidth()
+
+	renderRow := func(label string, stats TokenStats) string {
+		labelStr := lipgloss.NewStyle().Width(lw).Foreground(labelColor).Render(label)
+		totalIn := stats.InputTokens + stats.CacheCreation + stats.CacheRead
+		in := valStyle.Render(formatTokenCount(totalIn))
+		out := valStyle.Render(formatTokenCount(stats.OutputTokens))
+		inLabel := dimStyle.Render(" in  ")
+		outLabel := dimStyle.Render(" out")
+		return labelStr + in + inLabel + out + outLabel + "\n"
+	}
+
+	if m.kimiTokensToday.Total() > 0 {
+		b.WriteString(renderRow(todayLabel, m.kimiTokensToday))
+	}
+	if m.kimiTokens7d.Total() > 0 {
+		b.WriteString(renderRow(weekLabel, m.kimiTokens7d))
 	}
 
 	return b.String()

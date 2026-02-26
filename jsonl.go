@@ -73,7 +73,7 @@ func scanClaudeTokens(since time.Time) (TokenStats, error) {
 	return stats, nil
 }
 
-// scanAllTokens combines Claude + Codex token counts.
+// scanAllTokens combines Claude + Codex + Kimi token counts.
 func scanAllTokens(since time.Time) (TokenStats, error) {
 	claude, err := scanClaudeTokens(since)
 	if err != nil {
@@ -83,11 +83,15 @@ func scanAllTokens(since time.Time) (TokenStats, error) {
 	if err != nil {
 		return claude, err
 	}
+	kimi, err := scanKimiTokens(since)
+	if err != nil {
+		return claude, err
+	}
 	return TokenStats{
-		InputTokens:  claude.InputTokens + codex.InputTokens,
-		OutputTokens: claude.OutputTokens + codex.OutputTokens,
-		CacheCreation: claude.CacheCreation + codex.CacheCreation,
-		CacheRead:    claude.CacheRead + codex.CacheRead,
+		InputTokens:   claude.InputTokens + codex.InputTokens + kimi.InputTokens,
+		OutputTokens:  claude.OutputTokens + codex.OutputTokens + kimi.OutputTokens,
+		CacheCreation: claude.CacheCreation + codex.CacheCreation + kimi.CacheCreation,
+		CacheRead:     claude.CacheRead + codex.CacheRead + kimi.CacheRead,
 	}, nil
 }
 
@@ -245,7 +249,7 @@ func scanClaudeFileTokensByDay(path string, since, until time.Time, daily DailyT
 	}
 }
 
-// scanAllTokensByDay combines Claude + Codex per-day token counts.
+// scanAllTokensByDay combines Claude + Codex + Kimi per-day token counts.
 func scanAllTokensByDay(year int, month time.Month) (DailyTokenStats, error) {
 	claude, err := scanClaudeTokensByDay(year, month)
 	if err != nil {
@@ -255,12 +259,24 @@ func scanAllTokensByDay(year int, month time.Month) (DailyTokenStats, error) {
 	if err != nil {
 		return claude, err
 	}
+	kimi, err := scanKimiTokensByDay(year, month)
+	if err != nil {
+		return claude, err
+	}
 	for day, cs := range codex {
 		s := claude[day]
 		s.InputTokens += cs.InputTokens
 		s.OutputTokens += cs.OutputTokens
 		s.CacheCreation += cs.CacheCreation
 		s.CacheRead += cs.CacheRead
+		claude[day] = s
+	}
+	for day, ks := range kimi {
+		s := claude[day]
+		s.InputTokens += ks.InputTokens
+		s.OutputTokens += ks.OutputTokens
+		s.CacheCreation += ks.CacheCreation
+		s.CacheRead += ks.CacheRead
 		claude[day] = s
 	}
 	return claude, nil

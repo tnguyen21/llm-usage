@@ -1,6 +1,6 @@
 # llm-usage
 
-TUI for tracking your Claude and Codex rate limit usage. Built with [Charm](https://charm.sh).
+TUI for tracking your Claude, Codex, and Kimi rate limit usage. Built with [Charm](https://charm.sh).
 
 ![Go](https://img.shields.io/badge/Go-1.23-blue)
 
@@ -34,7 +34,7 @@ For tmux statusbars or scripts:
 
 ```bash
 llm-usage --compact
-# 5h:45% 7d:29%
+# claude:5h:45%,7d:29% codex:5h:12%,7d:8% tok:1.2M
 ```
 
 ```bash
@@ -63,4 +63,6 @@ Hover over a bar to see the exact utilization percentage.
 ## Requirements
 
 - macOS (for Keychain auto-detection) or `CLAUDE_OAUTH_TOKEN` env var
-- Logged into Claude Code (`claude`)
+- Logged into Claude Code (`claude`) for Claude rate limits
+- [Codex CLI](https://github.com/openai/codex) installed for Codex rate limits  
+- [Kimi Code CLI](https://github.com/MoonshotAI/kimi-cli) installed for Kimi token tracking (Kimi doesn't expose local rate limits)
