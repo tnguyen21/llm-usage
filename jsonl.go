@@ -20,6 +20,16 @@ func (t TokenStats) Total() int {
 	return t.InputTokens + t.OutputTokens + t.CacheCreation + t.CacheRead
 }
 
+// Add returns the sum of two TokenStats.
+func (t TokenStats) Add(other TokenStats) TokenStats {
+	return TokenStats{
+		InputTokens:   t.InputTokens + other.InputTokens,
+		OutputTokens:  t.OutputTokens + other.OutputTokens,
+		CacheCreation: t.CacheCreation + other.CacheCreation,
+		CacheRead:     t.CacheRead + other.CacheRead,
+	}
+}
+
 // DailyTokenStats maps day-of-month (1-31) to TokenStats.
 type DailyTokenStats map[int]TokenStats
 

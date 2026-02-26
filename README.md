@@ -57,8 +57,26 @@ llm-usage
 |-----|--------|
 | `q` | Quit |
 | `r` | Refresh |
+| `c` | Toggle calendar view |
+| `1` | Toggle Claude visibility |
+| `2` | Toggle Codex visibility |
+| `3` | Toggle Kimi visibility |
 
 Hover over a bar to see the exact utilization percentage.
+
+### Configuration
+
+Provider visibility settings are saved to `~/.config/llm-usage/config.json`. You can also manually edit this file:
+
+```json
+{
+  "providers": {
+    "claude": true,
+    "codex": true,
+    "kimi": true
+  }
+}
+```
 
 ## Requirements
 

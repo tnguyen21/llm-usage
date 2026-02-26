@@ -115,6 +115,9 @@ type model struct {
 	calendarData  DailyTokenStats
 	calendarYear  int
 	calendarMonth time.Month
+
+	// Config for provider visibility
+	config Config
 }
 
 // narrow returns true when the terminal is too tight for the full layout
@@ -156,7 +159,7 @@ func (m model) borderStyle() lipgloss.Style {
 	return s.Padding(0, 2)
 }
 
-func newModel(token, subType string) model {
+func newModel(token, subType string, cfg Config) model {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("99"))
@@ -173,6 +176,7 @@ func newModel(token, subType string) model {
 		loading:         true,
 		token:           token,
 		subType:         subType,
+		config:          cfg,
 	}
 }
 
@@ -304,6 +308,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.calendarMonth = now.Month()
 				return m, fetchCalendarCmd(now.Year(), now.Month())
 			}
+			return m, nil
+		case "1":
+			m.config.Providers.Claude = !m.config.Providers.Claude
+			m.config.Save()
+			return m, nil
+		case "2":
+			m.config.Providers.Codex = !m.config.Providers.Codex
+			m.config.Save()
+			return m, nil
+		case "3":
+			m.config.Providers.Kimi = !m.config.Providers.Kimi
+			m.config.Save()
 			return m, nil
 		}
 
@@ -465,11 +481,13 @@ func (m model) View() string {
 
 	narrow := m.narrow()
 	lw := m.labelWidth()
-	hasCodex := m.codexUsage != nil
+	hasCodex := m.codexUsage != nil && m.config.Providers.Codex
+	hasClaude := m.usage != nil && m.config.Providers.Claude
+	hasKimi := (m.kimiTokensToday.Total() > 0 || m.kimiTokens7d.Total() > 0) && m.config.Providers.Kimi
 
 	// Claude section
-	if m.usage != nil {
-		if hasCodex {
+	if hasClaude {
+		if hasCodex || hasKimi {
 			b.WriteString(sectionStyle.Render("Claude") + "\n")
 		}
 		if m.usage.FiveHour != nil {
@@ -501,7 +519,7 @@ func (m model) View() string {
 
 	// Codex section
 	if hasCodex {
-		if m.usage != nil {
+		if hasClaude {
 			b.WriteString("\n")
 		}
 		b.WriteString(sectionStyle.Render("Codex") + "\n")
@@ -527,17 +545,16 @@ func (m model) View() string {
 	}
 
 	// Kimi section (token counts only)
-	hasKimi := m.kimiTokensToday.Total() > 0 || m.kimiTokens7d.Total() > 0
 	if hasKimi {
-		if m.usage != nil || hasCodex {
+		if hasClaude || hasCodex {
 			b.WriteString("\n")
 		}
 		b.WriteString(sectionStyle.Render("Kimi") + "\n")
 		b.WriteString(m.renderKimiTokenSection())
 	}
 
-	// token counts
-	if m.tokensToday.Total() > 0 || m.tokens7d.Total() > 0 {
+	// aggregated token counts (all enabled providers)
+	if m.config.AnyEnabled() && (m.tokensToday.Total() > 0 || m.tokens7d.Total() > 0) {
 		b.WriteString("\n")
 		b.WriteString(m.renderTokenSection())
 	}
@@ -547,8 +564,26 @@ func (m model) View() string {
 		b.WriteString(staleStyle.Render("  "+m.err.Error()) + "\n\n")
 	}
 
-	// footer hint
-	b.WriteString(footerStyle.Render("  [c] calendar") + "\n")
+	// footer hint with provider toggles
+	providerHints := []string{
+		"[c] calendar",
+	}
+	if m.config.Providers.Claude {
+		providerHints = append(providerHints, "[1] Claude ✓")
+	} else {
+		providerHints = append(providerHints, "[1] Claude ✗")
+	}
+	if m.config.Providers.Codex {
+		providerHints = append(providerHints, "[2] Codex ✓")
+	} else {
+		providerHints = append(providerHints, "[2] Codex ✗")
+	}
+	if m.config.Providers.Kimi {
+		providerHints = append(providerHints, "[3] Kimi ✓")
+	} else {
+		providerHints = append(providerHints, "[3] Kimi ✗")
+	}
+	b.WriteString(footerStyle.Render("  "+joinWith(providerHints, "  ")) + "\n")
 
 	return m.borderStyle().Render(b.String())
 }
@@ -618,6 +653,7 @@ func (m model) renderTokenSection() string {
 		return labelStr + in + inLabel + out + outLabel + "\n"
 	}
 
+	// Use pre-computed aggregated tokens
 	if m.tokensToday.Total() > 0 {
 		b.WriteString(renderRow(todayLabel, m.tokensToday))
 	}

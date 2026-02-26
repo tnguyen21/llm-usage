@@ -9,9 +9,12 @@ import (
 )
 
 func main() {
+	// Load config (or use defaults)
+	cfg, _ := LoadConfig()
+
 	// compact mode
 	if len(os.Args) > 1 && os.Args[1] == "--compact" {
-		runCompact()
+		runCompact(cfg)
 		return
 	}
 
@@ -21,21 +24,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	p := tea.NewProgram(newModel(token, subType), tea.WithAltScreen())
+	p := tea.NewProgram(newModel(token, subType, cfg), tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func runCompact() {
+func runCompact(cfg Config) {
 	token, _, err := loadToken()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %s\n", err)
-		os.Exit(1)
-	}
-
-	usage, err := fetchUsage(token)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %s\n", err)
 		os.Exit(1)
@@ -44,37 +41,46 @@ func runCompact() {
 	parts := []string{}
 
 	// Claude
-	var claudeParts []string
-	if usage.FiveHour != nil {
-		claudeParts = append(claudeParts, fmt.Sprintf("5h:%.0f%%", 100-usage.FiveHour.Utilization))
-	}
-	if usage.SevenDay != nil {
-		claudeParts = append(claudeParts, fmt.Sprintf("7d:%.0f%%", 100-usage.SevenDay.Utilization))
-	}
-	if len(claudeParts) > 0 {
-		parts = append(parts, "claude:"+joinWith(claudeParts, ","))
+	if cfg.Providers.Claude {
+		usage, err := fetchUsage(token)
+		if err == nil && usage != nil {
+			var claudeParts []string
+			if usage.FiveHour != nil {
+				claudeParts = append(claudeParts, fmt.Sprintf("5h:%.0f%%", 100-usage.FiveHour.Utilization))
+			}
+			if usage.SevenDay != nil {
+				claudeParts = append(claudeParts, fmt.Sprintf("7d:%.0f%%", 100-usage.SevenDay.Utilization))
+			}
+			if len(claudeParts) > 0 {
+				parts = append(parts, "claude:"+joinWith(claudeParts, ","))
+			}
+		}
 	}
 
 	// Codex
-	codexUsage, codexErr := fetchCodexUsage()
-	if codexErr == nil && codexUsage != nil {
-		var codexParts []string
-		if codexUsage.Primary != nil {
-			codexParts = append(codexParts, fmt.Sprintf("5h:%.0f%%", 100-codexUsage.Primary.UsedPercent))
-		}
-		if codexUsage.Secondary != nil {
-			codexParts = append(codexParts, fmt.Sprintf("7d:%.0f%%", 100-codexUsage.Secondary.UsedPercent))
-		}
-		if len(codexParts) > 0 {
-			parts = append(parts, "codex:"+joinWith(codexParts, ","))
+	if cfg.Providers.Codex {
+		codexUsage, codexErr := fetchCodexUsage()
+		if codexErr == nil && codexUsage != nil {
+			var codexParts []string
+			if codexUsage.Primary != nil {
+				codexParts = append(codexParts, fmt.Sprintf("5h:%.0f%%", 100-codexUsage.Primary.UsedPercent))
+			}
+			if codexUsage.Secondary != nil {
+				codexParts = append(codexParts, fmt.Sprintf("7d:%.0f%%", 100-codexUsage.Secondary.UsedPercent))
+			}
+			if len(codexParts) > 0 {
+				parts = append(parts, "codex:"+joinWith(codexParts, ","))
+			}
 		}
 	}
 
-	// Token total
-	now := time.Now()
-	week, err := scanAllTokens(now.AddDate(0, 0, -7))
-	if err == nil && week.Total() > 0 {
-		parts = append(parts, "tok:"+formatTokenCount(week.Total()))
+	// Token total (always shown if any provider is enabled)
+	if cfg.AnyEnabled() {
+		now := time.Now()
+		week, err := scanAllTokens(now.AddDate(0, 0, -7))
+		if err == nil && week.Total() > 0 {
+			parts = append(parts, "tok:"+formatTokenCount(week.Total()))
+		}
 	}
 
 	for i, p := range parts {
