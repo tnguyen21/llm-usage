@@ -42,6 +42,7 @@ type codexPayload struct {
 }
 
 type codexRateLimit struct {
+	LimitID   string           `json:"limit_id"`
 	Primary   *codexBucketJSON `json:"primary"`
 	Secondary *codexBucketJSON `json:"secondary"`
 }
@@ -309,6 +310,8 @@ type codexTokenUsage struct {
 }
 
 // parseCodexFile reads a single session file and returns the last rate_limits entry.
+// Codex may emit multiple rate_limits per API call with different limit_ids.
+// We track per limit_id and prefer the one with actual non-zero usage data.
 func parseCodexFile(path string) (*CodexUsage, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -316,7 +319,8 @@ func parseCodexFile(path string) (*CodexUsage, error) {
 	}
 	defer f.Close()
 
-	var lastRL *codexRateLimit
+	// Track last rate_limits per limit_id
+	lastByID := make(map[string]*codexRateLimit)
 
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 512*1024), 512*1024)
@@ -339,11 +343,33 @@ func parseCodexFile(path string) (*CodexUsage, error) {
 		if payload.Type != "token_count" || payload.RateLimits == nil {
 			continue
 		}
-		lastRL = payload.RateLimits
+		id := payload.RateLimits.LimitID
+		if id == "" {
+			id = "_default"
+		}
+		lastByID[id] = payload.RateLimits
 	}
 
-	if lastRL == nil {
+	if len(lastByID) == 0 {
 		return nil, fmt.Errorf("no rate_limits in file")
+	}
+
+	// Pick the best limit_id: prefer one with non-zero usage, fall back to any.
+	var lastRL *codexRateLimit
+	for _, rl := range lastByID {
+		pUsed := rl.Primary != nil && rl.Primary.UsedPercent > 0
+		sUsed := rl.Secondary != nil && rl.Secondary.UsedPercent > 0
+		if pUsed || sUsed {
+			lastRL = rl
+			break
+		}
+	}
+	if lastRL == nil {
+		// All zero — just pick any
+		for _, rl := range lastByID {
+			lastRL = rl
+			break
+		}
 	}
 
 	now := time.Now()
